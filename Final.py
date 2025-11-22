@@ -32,7 +32,7 @@ df = df.drop(*drop_cols)
 # Convert numeric columns
 numeric_cols = ["Age", "Annual_Income", "Num_of_Loan", "Num_Credit_Card",
                 "Num_Bank_Accounts", "Num_Credit_Inquiries", "Amount_invested_monthly",
-                "Monthly_In_hand_Salary", "Credit_History_Age", "Median_Occupation_Income"]
+                "Monthly_In_hand_Salary", "Credit_History_Age"]
 
 for col_name in numeric_cols:
     df = df.withColumn(col_name, col(col_name).cast("double"))

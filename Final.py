@@ -18,23 +18,24 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # -----------------------------
-# Step 2: Load the data from Hive table
+# Step 2: Load data from Hive
 # -----------------------------
-df = spark.sql("SELECT * FROM final")  # Replace 'final' with your Hive table name
+df = spark.sql("SELECT * FROM final")  # Replace with your Hive table
 
 # -----------------------------
 # Step 3: Preprocessing
 # -----------------------------
-# Drop unnecessary columns (ID, PII)
-df = df.drop("Name", "SSN", "Customer_ID", "ID", "Month")
+# Drop unnecessary / PII columns
+drop_cols = ["Name", "SSN", "Customer_ID", "ID", "Month"]
+df = df.drop(*drop_cols)
 
-# Convert numeric columns to double
+# Convert numeric columns
 numeric_cols = ["Age", "Annual_Income", "Num_of_Loan", "Num_Credit_Card",
                 "Num_Bank_Accounts", "Num_Credit_Inquiries", "Amount_invested_monthly",
                 "Monthly_In_hand_Salary", "Credit_History_Age", "Median_Occupation_Income"]
 
 for col_name in numeric_cols:
-    df = df.withColumn(col_name, df[col_name].cast("double"))
+    df = df.withColumn(col_name, col(col_name).cast("double"))
 
 # Drop rows with nulls
 df = df.na.drop()
@@ -87,68 +88,43 @@ rf_model = rf.fit(train_df)
 predictions = rf_model.transform(test_df)
 
 # -----------------------------
-# Step 10: Evaluate model
+# Step 10: Evaluate metrics
 # -----------------------------
-evaluator_acc = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction", metricName="accuracy")
-evaluator_f1 = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction", metricName="f1")
+evaluator = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction", metricName="accuracy")
+accuracy = evaluator.evaluate(predictions)
 
-accuracy = evaluator_acc.evaluate(predictions)
-f1_score = evaluator_f1.evaluate(predictions)
+# Save metrics to HDFS
+metrics_df = spark.createDataFrame([(accuracy,)], ["accuracy"])
+metrics_df.write.mode("overwrite").csv("/user/champlin/credit_score_metrics")
 
 print(f"Test Accuracy: {accuracy:.4f}")
-print(f"Test F1 Score: {f1_score:.4f}")
 
 # Optional: confusion matrix
 predictions.groupBy("label", "prediction").count().show()
 
 # -----------------------------
-# Step 11: Write predictions per row to HBase robustly
+# Step 11: Write predictions to HBase
 # -----------------------------
 def write_to_hbase_partition(rows):
-    import happybase
-    try:
-        connection = happybase.Connection('172.28.1.1')  # Master IP
-        connection.open()
-        table = connection.table('final')  # HBase table
-        for row in rows:
-            try:
-                # Fallback row key if id is null
-                row_key = str(row.id) if row.id else str(row.prediction) + "_" + str(int(row.prediction))
-                table.put(row_key, {
-                    b'cf:predicted_credit_score': str(int(row.prediction)).encode('utf-8')
-                })
-            except Exception as e_row:
-                print(f"Row write failed: {row}, error: {e_row}")
-        connection.close()
-    except Exception as e_conn:
-        print(f"HBase connection failed: {e_conn}")
-
-# Select only id and prediction
-hbase_df = predictions.select("id", "prediction")
+    connection = happybase.Connection('172.28.1.1')  # Replace with master IP
+    connection.open()
+    table = connection.table('final')  # HBase table with CF 'cf'
+    for row in rows:
+        # Make sure row.id exists in DataFrame
+        row_key = str(row.id) if 'id' in row.asDict() else str(row.label)
+        table.put(row_key, {b'cf:predicted_credit_score': str(int(row.prediction)).encode('utf-8')})
+    connection.close()
 
 # Convert to RDD and write
+# Ensure 'id' column exists in DataFrame from Hive, otherwise use generated row number
+if 'id' not in predictions.columns:
+    from pyspark.sql.functions import monotonically_increasing_id
+    predictions = predictions.withColumn("id", monotonically_increasing_id())
+
+hbase_df = predictions.select("id", "prediction")
 hbase_df.rdd.foreachPartition(write_to_hbase_partition)
 
 # -----------------------------
-# Step 12: Write overall metrics to HBase
-# -----------------------------
-metrics_data = [
-    ('metrics', 'cf:accuracy', str(accuracy)),
-    ('metrics', 'cf:f1', str(f1_score))
-]
-
-def write_metrics_partition(rows):
-    connection = happybase.Connection('master')
-    connection.open()
-    table = connection.table('final')
-    for row_key, col, value in rows:
-        table.put(row_key, {col.encode('utf-8'): value.encode('utf-8')})
-    connection.close()
-
-spark.sparkContext.parallelize(metrics_data).foreachPartition(write_metrics_partition)
-
-
-# -----------------------------
-# Step 14: Stop Spark session
+# Step 12: Stop Spark session
 # -----------------------------
 spark.stop()

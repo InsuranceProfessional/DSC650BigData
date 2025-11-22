@@ -5,8 +5,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import confusion_matrix, classification_report
-import matplotlib.pyplot as plt
-import seaborn as sns
+
 
 # %% HBase Connection
 connection = happybase.Connection('master')  # replace with your HBase master host
@@ -82,16 +81,6 @@ print(cm)
 print("\nClassification Report:")
 print(classification_report(y_test, y_pred))
 
-# %% Plot confusion matrix
-plt.figure(figsize=(8, 6))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-            xticklabels=['Poor', 'Standard', 'Good'],
-            yticklabels=['Poor', 'Standard', 'Good'])
-plt.xlabel('Predicted')
-plt.ylabel('Actual')
-plt.title('Confusion Matrix - Random Forest (Tuned)')
-plt.tight_layout()
-plt.show()
 
 # %% Write predictions back to HBase
 for idx, row_key in enumerate(X_test.index):

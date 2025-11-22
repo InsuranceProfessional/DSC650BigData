@@ -1,4 +1,5 @@
 # %% Imports
+import happybase
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
@@ -7,15 +8,32 @@ from sklearn.metrics import confusion_matrix, classification_report
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# %% Load the data
-file_path = "C:\\Users\\champ\\OneDrive\\Documents\\MS Data Science\\DSC550 Data Mining\\Project\\train_clean.csv"
-df = pd.read_csv(file_path)
+# %% HBase Connection
+connection = happybase.Connection('master')  # replace with your HBase master host
+table = connection.table('final')
 
-# %% Filter out extreme values
-df = df[df['Annual_Income'] <= 1_000_000_000]
+# %% Load data from HBase into DataFrame
+rows = table.scan()  # get all rows
+data = []
+for key, value in rows:
+    row = {k.decode().split(":")[1]: v.decode() for k, v in value.items()}
+    row['HBASE_ROW_KEY'] = key.decode()
+    data.append(row)
 
-# %% Drop unneeded columns
-df = df.drop(columns=['ID', 'Customer_ID', 'Month'])
+df = pd.DataFrame(data)
+
+# %% Convert numeric columns to proper types
+numeric_cols = [
+    'Age', 'Annual_Income', 'Monthly_In_hand_Salary', 'Num_Bank_Accounts', 'Num_Credit_Card',
+    'Interest_Rate', 'Num_of_Loan', 'Delay_from_due_date', 'Num_of_Delayed_Payment',
+    'Changed_Credit_Limit', 'Num_Credit_Inquiries', 'Outstanding_Debt', 'Credit_Utilization_Ratio',
+    'Total_EMI_per_month', 'Amount_invested_monthly', 'Monthly_Balance',
+    'Median_Occupation_Income', 'Income_vs_Occupation_Median', 'Investment_to_Salary_Ratio'
+]
+
+for col in numeric_cols:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
 
 # %% Handle categorical variables
 label_cols = [
@@ -27,16 +45,14 @@ label_cols = [
 
 for col in label_cols:
     if col in df.columns:
-        if df[col].dtype == 'object':
-            df[col] = df[col].fillna("Unknown")
-        # Encode categorical labels
+        df[col] = df[col].fillna("Unknown")
         df[col] = LabelEncoder().fit_transform(df[col])
 
 # %% Drop remaining missing values
 df = df.dropna()
 
 # %% Define features and label
-X = df.drop(columns=['Credit_Score'])
+X = df.drop(columns=['Credit_Score', 'HBASE_ROW_KEY'])
 y = df['Credit_Score']
 
 # %% Train-test split
@@ -44,7 +60,7 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
-# %% Train Random Forest with tuned hyperparameters
+# %% Train Random Forest
 rf = RandomForestClassifier(
     n_estimators=310,
     max_depth=22,
@@ -76,3 +92,12 @@ plt.ylabel('Actual')
 plt.title('Confusion Matrix - Random Forest (Tuned)')
 plt.tight_layout()
 plt.show()
+
+# %% Write predictions back to HBase
+for idx, row_key in enumerate(X_test.index):
+    table.put(
+        df.loc[row_key, 'HBASE_ROW_KEY'],
+        {b'cf:Predicted_Credit_Score': str(y_pred[idx]).encode()}
+    )
+
+print("Predictions written back to HBase table 'final'.")

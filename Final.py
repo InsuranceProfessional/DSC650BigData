@@ -42,7 +42,6 @@ df = df.na.drop()
 
 # Derived features
 df = df.withColumn("Investment_to_Salary_Ratio", col("Amount_invested_monthly") / col("Monthly_In_hand_Salary"))
-df = df.withColumn("Income_vs_Occ_Median", col("Annual_Income") - col("Median_Occupation_Income"))
 
 # -----------------------------
 # Step 4: Encode categorical columns

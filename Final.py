@@ -1,146 +1,78 @@
-# ============================================
-# Champlin Smith - Credit Score Prediction in Spark + HBase
-# ============================================
+# %% Imports
+import pandas as pd
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import confusion_matrix, classification_report
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-from pyspark.sql import SparkSession
-from pyspark.ml.feature import VectorAssembler, StringIndexer
-from pyspark.ml.classification import RandomForestClassifier
-from pyspark.ml.evaluation import MulticlassClassificationEvaluator
-from pyspark.sql.functions import col, monotonically_increasing_id
-import happybase
+# %% Load the data
+file_path = "C:\\Users\\champ\\OneDrive\\Documents\\MS Data Science\\DSC550 Data Mining\\Project\\train_clean.csv"
+df = pd.read_csv(file_path)
 
-# -----------------------------
-# Step 1: Create Spark Session
-# -----------------------------
-spark = SparkSession.builder \
-    .appName("CreditScorePrediction") \
-    .getOrCreate()
+# %% Filter out extreme values
+df = df[df['Annual_Income'] <= 1_000_000_000]
 
-# -----------------------------
-# Step 2: Load CSV from HDFS
-# -----------------------------
-df = spark.read.csv("/user/champlin/nifi-data/dataset.csv",
-                    header=True,
-                    inferSchema=True)
+# %% Drop unneeded columns
+df = df.drop(columns=['ID', 'Customer_ID', 'Month'])
 
-print("Initial row count:", df.count())
+# %% Handle categorical variables
+label_cols = [
+    'Type_of_Loan', 'Credit_Mix', 'Payment_of_Min_Amount', 'Payment_Behaviour', 'Credit_Score',
+    'Occ_Accountant', 'Occ_Architect', 'Occ_Developer', 'Occ_Doctor', 'Occ_Engineer',
+    'Occ_Entrepreneur', 'Occ_Journalist', 'Occ_Lawyer', 'Occ_Manager', 'Occ_Mechanic',
+    'Occ_Media_Manager', 'Occ_Musician', 'Occ_Scientist', 'Occ_Teacher', 'Occ_Writer', 'Occ________'
+]
 
-# -----------------------------
-# Step 3: Drop unnecessary / PII columns
-# -----------------------------
-drop_cols = ["Name", "SSN", "Customer_ID", "ID", "Month"]
-df = df.drop(*drop_cols)
+for col in label_cols:
+    if col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].fillna("Unknown")
+        # Encode categorical labels
+        df[col] = LabelEncoder().fit_transform(df[col])
 
-# -----------------------------
-# Step 4: Convert numeric columns safely
-# -----------------------------
-numeric_cols = ["Age", "Annual_Income", "Num_of_Loan", "Num_Credit_Card",
-                "Num_Bank_Accounts", "Num_Credit_Inquiries", "Amount_invested_monthly",
-                "Monthly_In_hand_Salary", "Credit_History_Age", "Total_EMI_per_month",
-                "Outstanding_Debt", "Credit_Utilization_Ratio", "Changed_Credit_Limit",
-                "Delay_from_due_date", "Num_of_Delayed_Payment", "Interest_Rate"]
+# %% Drop remaining missing values
+df = df.dropna()
 
-for col_name in numeric_cols:
-    df = df.withColumn(col_name, col(col_name).cast("double"))
+# %% Define features and label
+X = df.drop(columns=['Credit_Score'])
+y = df['Credit_Score']
 
-# -----------------------------
-# Step 5: Handle nulls
-# -----------------------------
-# Fill numeric nulls with median
-for col_name in numeric_cols:
-    median = df.approxQuantile(col_name, [0.5], 0.0)[0]
-    df = df.fillna({col_name: median})
+# %% Train-test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
 
-# Fill categorical nulls with 'Unknown'
-categorical_cols = ["Occupation", "Type_of_Loan", "Credit_Mix",
-                    "Payment_of_Min_Amount", "Payment_Behaviour"]
-for cat_col in categorical_cols:
-    df = df.fillna({cat_col: 'Unknown'})
+# %% Train Random Forest with tuned hyperparameters
+rf = RandomForestClassifier(
+    n_estimators=310,
+    max_depth=22,
+    min_samples_split=4,
+    min_samples_leaf=3,
+    max_features='sqrt',
+    class_weight='balanced',
+    random_state=42
+)
+rf.fit(X_train, y_train)
 
-# -----------------------------
-# Step 6: Derived features
-# -----------------------------
-df = df.withColumn("Investment_to_Salary_Ratio", 
-                   col("Amount_invested_monthly") / (col("Monthly_In_hand_Salary") + 1e-6))
+# %% Predictions
+y_pred = rf.predict(X_test)
 
-# -----------------------------
-# Step 7: Encode categorical columns
-# -----------------------------
-for cat_col in categorical_cols:
-    indexer = StringIndexer(inputCol=cat_col, outputCol=f"{cat_col}_index").setHandleInvalid("keep")
-    df = indexer.fit(df).transform(df)
+# %% Evaluation
+cm = confusion_matrix(y_test, y_pred)
+print("Confusion Matrix:")
+print(cm)
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred))
 
-# -----------------------------
-# Step 8: Assemble features
-# -----------------------------
-feature_cols = ["Age", "Annual_Income", "Num_of_Loan", "Num_Credit_Card",
-                "Num_Bank_Accounts", "Num_Credit_Inquiries", "Credit_History_Age",
-                "Amount_invested_monthly", "Monthly_In_hand_Salary",
-                "Investment_to_Salary_Ratio"] + \
-                [f"{cat}_index" for cat in categorical_cols]
-
-assembler = VectorAssembler(inputCols=feature_cols, outputCol="features", handleInvalid="skip")
-df = assembler.transform(df)
-
-# -----------------------------
-# Step 9: Index label column
-# -----------------------------
-label_indexer = StringIndexer(inputCol="Credit_Score", outputCol="label").fit(df)
-df = label_indexer.transform(df)
-
-# -----------------------------
-# Step 10: Split into train/test
-# -----------------------------
-train_df, test_df = df.randomSplit([0.8, 0.2], seed=42)
-
-# Make sure train_df is not empty
-if train_df.count() == 0 or test_df.count() == 0:
-    raise ValueError("Train or test DataFrame is empty after preprocessing. Check your CSV and null handling.")
-
-# -----------------------------
-# Step 11: Train Random Forest
-# -----------------------------
-rf = RandomForestClassifier(featuresCol="features", labelCol="label", numTrees=100, maxDepth=10)
-rf_model = rf.fit(train_df)
-
-# -----------------------------
-# Step 12: Predict on test data
-# -----------------------------
-predictions = rf_model.transform(test_df)
-
-# -----------------------------
-# Step 13: Evaluate metrics
-# -----------------------------
-evaluator = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction", metricName="accuracy")
-accuracy = evaluator.evaluate(predictions)
-print(f"Test Accuracy: {accuracy:.4f}")
-
-# Save metrics to HDFS
-metrics_df = spark.createDataFrame([(accuracy,)], ["accuracy"])
-metrics_df.write.mode("overwrite").csv("/user/champlin/credit_score_metrics")
-
-# Optional: confusion matrix
-predictions.groupBy("label", "prediction").count().show()
-
-# -----------------------------
-# Step 14: Write predictions to HBase
-# -----------------------------
-# Ensure unique row ID exists
-predictions = predictions.withColumn("id", monotonically_increasing_id())
-
-def write_to_hbase_partition(rows):
-    connection = happybase.Connection('172.28.1.1')  # HBase master IP
-    connection.open()
-    table = connection.table('final')  # HBase table with CF 'cf'
-    for row in rows:
-        row_key = str(row.id)
-        table.put(row_key, {b'cf:predicted_credit_score': str(int(row.prediction)).encode('utf-8')})
-    connection.close()
-
-hbase_df = predictions.select("id", "prediction")
-hbase_df.rdd.foreachPartition(write_to_hbase_partition)
-
-# -----------------------------
-# Step 15: Stop Spark session
-# -----------------------------
-spark.stop()
+# %% Plot confusion matrix
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=['Poor', 'Standard', 'Good'],
+            yticklabels=['Poor', 'Standard', 'Good'])
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix - Random Forest (Tuned)')
+plt.tight_layout()
+plt.show()

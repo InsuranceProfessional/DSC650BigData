@@ -1,12 +1,12 @@
 # ============================================
-# Champlin Smith - Credit Score Prediction in Spark + HBase
+# Champlin Smith - Credit Score Prediction in Spark + HBase (CSV from HDFS)
 # ============================================
 
 from pyspark.sql import SparkSession
 from pyspark.ml.feature import VectorAssembler, StringIndexer
 from pyspark.ml.classification import RandomForestClassifier
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, monotonically_increasing_id
 import happybase
 
 # -----------------------------
@@ -14,13 +14,12 @@ import happybase
 # -----------------------------
 spark = SparkSession.builder \
     .appName("CreditScorePrediction") \
-    .enableHiveSupport() \
     .getOrCreate()
 
 # -----------------------------
-# Step 2: Load data from Hive
+# Step 2: Load data from HDFS CSV
 # -----------------------------
-df = spark.sql("SELECT * FROM final")  # Replace with your Hive table
+df = spark.read.csv("/user/champlin/nifi-data/dataset.csv", header=True, inferSchema=True)
 
 # -----------------------------
 # Step 3: Preprocessing
@@ -58,7 +57,7 @@ for cat_col in categorical_cols:
 feature_cols = ["Age", "Annual_Income", "Num_of_Loan", "Num_Credit_Card",
                 "Num_Bank_Accounts", "Num_Credit_Inquiries", "Credit_History_Age",
                 "Amount_invested_monthly", "Monthly_In_hand_Salary",
-                "Investment_to_Salary_Ratio", "Income_vs_Occ_Median"] + \
+                "Investment_to_Salary_Ratio"] + \
                 [f"{cat}_index" for cat in categorical_cols]
 
 assembler = VectorAssembler(inputCols=feature_cols, outputCol="features", handleInvalid="skip")
@@ -105,19 +104,16 @@ predictions.groupBy("label", "prediction").count().show()
 # Step 11: Write predictions to HBase
 # -----------------------------
 def write_to_hbase_partition(rows):
-    connection = happybase.Connection('172.28.1.1')  # Replace with master IP
+    connection = happybase.Connection('172.28.1.1')  # Replace with HBase master IP
     connection.open()
     table = connection.table('final')  # HBase table with CF 'cf'
     for row in rows:
-        # Make sure row.id exists in DataFrame
         row_key = str(row.id) if 'id' in row.asDict() else str(row.label)
         table.put(row_key, {b'cf:predicted_credit_score': str(int(row.prediction)).encode('utf-8')})
     connection.close()
 
-# Convert to RDD and write
-# Ensure 'id' column exists in DataFrame from Hive, otherwise use generated row number
+# Add unique ID if missing
 if 'id' not in predictions.columns:
-    from pyspark.sql.functions import monotonically_increasing_id
     predictions = predictions.withColumn("id", monotonically_increasing_id())
 
 hbase_df = predictions.select("id", "prediction")

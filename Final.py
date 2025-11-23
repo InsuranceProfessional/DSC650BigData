@@ -83,8 +83,16 @@ predictions = model.transform(test_df)
 def map_prediction(pred):
     return labels[int(pred)]
 
-# Avoid ambiguous column names
-predictions = predictions.withColumn('Predicted_Credit_Score', col('prediction'))
+# Drop old column if exists
+if 'Predicted_Credit_Score' in predictions.columns:
+    predictions = predictions.drop('Predicted_Credit_Score')
+
+# Map numeric prediction to string
+from pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
+
+map_udf = udf(lambda x: labels[int(x)], StringType())
+predictions = predictions.withColumn('Predicted_Credit_Score', map_udf(col('prediction')))
 
 # %% Step 13: Write predictions back to HBase using foreachPartition
 def write_partition_to_hbase(partition):

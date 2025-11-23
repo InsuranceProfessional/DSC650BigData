@@ -19,7 +19,10 @@ table = connection.table('final')  # HBase table name
 rows = table.scan()
 data = []
 for key, row in rows:
-    row_dict = {k.decode(): v.decode() if v is not None else None for k, v in row.items()}
+    row_dict = {}
+    for k, v in row.items():
+        col_name = k.decode().replace("cf:", "")  # remove cf: prefix
+        row_dict[col_name] = v.decode() if v is not None else None
     row_dict['ID'] = key.decode()
     data.append(row_dict)
 
@@ -31,6 +34,9 @@ df.rename(columns={
     'Median Occupation Income': 'Median_Occupation_Income',
     'Income vs Occupation Median': 'Income_vs_Occupation_Median'
 }, inplace=True)
+
+# Force all columns to string initially
+df = df.astype(str)
 
 # %% Step 3: Convert numeric columns
 numeric_cols = [

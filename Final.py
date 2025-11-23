@@ -81,41 +81,16 @@ predictions = model.transform(test_df)
 
 # Map numeric prediction back to original credit score strings in a new column
 predictions_pd = predictions.select('ID', 'prediction').toPandas()
-predictions_pd['Predicted_Credit_Score_New'] = predictions_pd['prediction'].apply(lambda x: labels[int(x)])
+predictions_pd['Predicted_Credit_Score'] = predictions_pd['prediction'].apply(lambda x: labels[int(x)])
 
 # %% Step 12: Write predictions back to HBase in batches
 batch_size = 500
 with table.batch(batch_size=batch_size) as b:
     for i, row in predictions_pd.iterrows():
-        b.put(str(row.ID), {b'cf:Predicted_Credit_Score': row.Predicted_Credit_Score_New.encode()})
+        b.put(str(row.ID), {b'cf:Predicted_Credit_Score': row.Predicted_Credit_Score.encode()})
 
 print("Predictions written back to HBase successfully.")
 
-# Drop old column if exists
-if 'Predicted_Credit_Score' in predictions.columns:
-    predictions = predictions.drop('Predicted_Credit_Score')
-
-# Map numeric prediction to string
-from pyspark.sql.functions import udf
-from pyspark.sql.types import StringType
-
-map_udf = udf(lambda x: labels[int(x)], StringType())
-predictions = predictions.withColumn('Predicted_Credit_Score', map_udf(col('prediction')))
-
-# %% Step 13: Write predictions back to HBase using foreachPartition
-def write_partition_to_hbase(partition):
-    import happybase  # must import inside function for workers
-    conn = happybase.Connection('master')
-    tbl = conn.table('final')
-    with tbl.batch(batch_size=500) as b:
-        for row in partition:
-            b.put(str(row.ID), {b'cf:Predicted_Credit_Score': map_prediction(row.prediction).encode()})
-    conn.close()
-
-predictions.select('ID', 'prediction').rdd.foreachPartition(write_partition_to_hbase)
-
-print("Predictions written back to HBase successfully.")
-
-# %% Step 14: Stop Spark and HBase connection
+# %% Step 13: Stop Spark and HBase connection
 spark.stop()
 connection.close()

@@ -79,9 +79,17 @@ model = rf.fit(train_df)
 # %% Step 11: Make predictions
 predictions = model.transform(test_df)
 
-# %% Step 12: Map numeric prediction back to original credit score strings
-def map_prediction(pred):
-    return labels[int(pred)]
+# Map numeric prediction back to original credit score strings in a new column
+predictions_pd = predictions.select('ID', 'prediction').toPandas()
+predictions_pd['Predicted_Credit_Score_New'] = predictions_pd['prediction'].apply(lambda x: labels[int(x)])
+
+# %% Step 12: Write predictions back to HBase in batches
+batch_size = 500
+with table.batch(batch_size=batch_size) as b:
+    for i, row in predictions_pd.iterrows():
+        b.put(str(row.ID), {b'cf:Predicted_Credit_Score': row.Predicted_Credit_Score_New.encode()})
+
+print("Predictions written back to HBase successfully.")
 
 # Drop old column if exists
 if 'Predicted_Credit_Score' in predictions.columns:

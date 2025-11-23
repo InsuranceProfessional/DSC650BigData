@@ -32,9 +32,6 @@ df['Monthly_In_hand_Salary'] = pd.to_numeric(df['Monthly_In_hand_Salary'], error
 # Filter rows: only keep Monthly_In_hand_Salary > 100
 df = df[df['Monthly_In_hand_Salary'] > 100]
 
-# Optional: only keep top 500 rows for testing
-df = df.head(500)
-
 # %% Step 4: Convert to Spark DataFrame
 spark_df = spark.createDataFrame(df[['ID', 'Annual_Income', 'Monthly_In_hand_Salary']])
 

@@ -14,7 +14,7 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # %% Step 2: Connect to HBase and read table
-connection = happybase.Connection('master')
+connection = happybase.Connection('master')  # Replace with your HBase Thrift host
 table = connection.table('final')
 
 rows = []
@@ -73,21 +73,34 @@ train_df, test_df = spark_df.randomSplit([0.8, 0.2], seed=42)
 
 # %% Step 10: Train Random Forest Classifier
 rf = RandomForestClassifier(featuresCol='features', labelCol='label',
-                            numTrees=10, maxDepth=5, seed=42)
+                            numTrees=50, maxDepth=5, seed=42)
 model = rf.fit(train_df)
 
 # %% Step 11: Make predictions
 predictions = model.transform(test_df)
 
 # Map numeric prediction back to original credit score strings
-predictions_pd = predictions.select('ID', 'prediction').toPandas()
-predictions_pd['Predicted_Credit_Score'] = predictions_pd['prediction'].apply(lambda x: labels[int(x)])
+from pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
 
-# %% Step 12: Write predictions back to HBase in batches
-batch_size = 1000
-with table.batch(batch_size=batch_size) as b:
-    for i, row in predictions_pd.iterrows():
-        b.put(str(row.ID), {b'cf:Predicted_Credit_Score': row.Predicted_Credit_Score.encode()})
+def map_prediction(pred):
+    return labels[int(pred)]
+
+map_udf = udf(map_prediction, StringType())
+predictions = predictions.withColumn('Predicted_Credit_Score', map_udf(col('prediction')))
+
+# %% Step 12: Write predictions back to HBase in parallel
+def write_partition_to_hbase(partition):
+    import happybase
+    connection = happybase.Connection('master')
+    table = connection.table('final')
+    batch_size = 500
+    with table.batch(batch_size=batch_size) as b:
+        for row in partition:
+            b.put(str(row.ID), {b'cf:Predicted_Credit_Score': row.Predicted_Credit_Score.encode()})
+    connection.close()
+
+predictions.select('ID', 'Predicted_Credit_Score').rdd.foreachPartition(write_partition_to_hbase)
 
 print("Predictions written back to HBase successfully.")
 

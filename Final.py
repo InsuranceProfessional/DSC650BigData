@@ -25,6 +25,8 @@ for key, data in table.scan():
 
 df = pd.DataFrame(rows)
 
+df = df.head(100)
+
 # %% Step 3: Clean data
 
 # Convert numeric columns safely (exclude ID and Credit_Score)

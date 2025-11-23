@@ -16,7 +16,7 @@ spark = SparkSession.builder \
 # ---------------------------
 # Step 2: Load Data
 # ---------------------------
-df = spark.sql("SELECT * FROM gradesml")  # Replace with your Hive table
+df = spark.sql("SELECT * FROM final")
 
 # ---------------------------
 # Step 3: Clean & Transform Credit_Score

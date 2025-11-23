@@ -58,8 +58,6 @@ with table.batch(batch_size=500) as b:
     for i, row in predictions_pd.iterrows():
         b.put(str(row.ID), {b'cf:Predicted_Monthly_Salary': str(row.prediction).encode()})
 
-
-predictions.select('ID', 'prediction').rdd.foreachPartition(write_partition_to_hbase)
 print("Predictions written back to HBase successfully.")
 
 # %% Step 11: Stop Spark and HBase connection

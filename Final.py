@@ -47,6 +47,8 @@ model = lr.fit(train_df)
 # %% Step 8: Make predictions
 predictions = model.transform(test_df)
 
+predictions.select('ID', 'Annual_Income', 'Monthly_In_hand_Salary', 'prediction').show(10)
+
 # %% Step 9: Show performance metrics
 training_summary = model.summary
 print("RMSE:", training_summary.rootMeanSquaredError)

@@ -27,11 +27,11 @@ df = df.head(100)  # Only 100 rows for testing
 
 # %% Step 3: Clean numeric data
 # Convert to numeric and handle missing
-for col_name in ['Annual_Income', 'Monthly_Inhand_Salary']:
+for col_name in ['Annual_Income', 'Monthly_In_hand_Salary']:
     df[col_name] = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
 
 # %% Step 4: Convert to Spark DataFrame
-spark_df = spark.createDataFrame(df[['ID', 'Annual_Income', 'Monthly_Inhand_Salary']])
+spark_df = spark.createDataFrame(df[['ID', 'Annual_Income', 'Monthly_In_hand_Salary']])
 
 # %% Step 5: Assemble features
 assembler = VectorAssembler(inputCols=['Annual_Income'], outputCol='features')
@@ -41,7 +41,7 @@ spark_df = assembler.transform(spark_df)
 train_df, test_df = spark_df.randomSplit([0.8, 0.2], seed=42)
 
 # %% Step 7: Train Linear Regression
-lr = LinearRegression(featuresCol='features', labelCol='Monthly_Inhand_Salary')
+lr = LinearRegression(featuresCol='features', labelCol='Monthly_In_hand_Salary')
 model = lr.fit(train_df)
 
 # %% Step 8: Make predictions

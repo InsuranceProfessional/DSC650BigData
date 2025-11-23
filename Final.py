@@ -18,9 +18,18 @@ table = connection.table('final')
 
 rows = []
 for key, data in table.scan():
-    row = {k.decode().split(':')[-1]: v.decode() for k, v in data.items()}
+    row = {}
+    for k, v in data.items():
+        col_name = k.decode().split(':')[-1]
+        try:
+            # Convert to float if possible
+            row[col_name] = float(v)
+        except:
+            # If it fails (e.g., string), store as string
+            row[col_name] = v.decode()
     row['ID'] = key.decode()
     rows.append(row)
+
 
 df = pd.DataFrame(rows)
 df = df.head(500)  # Only 100 rows for testing

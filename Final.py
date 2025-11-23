@@ -74,7 +74,7 @@ train_df, test_df = spark_df.randomSplit([0.8, 0.2], seed=42)
 
 # %% Step 10: Train Random Forest
 rf = RandomForestClassifier(featuresCol='features', labelCol='label',
-                            numTrees=310, maxDepth=22, seed=42)
+                            numTrees=5, maxDepth=3, seed=42)
 model = rf.fit(train_df)
 
 # %% Step 11: Make predictions

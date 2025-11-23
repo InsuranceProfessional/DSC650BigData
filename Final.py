@@ -1,6 +1,6 @@
 # %% Imports
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when
+from pyspark.sql.functions import col
 from pyspark.ml.feature import VectorAssembler, StringIndexer
 from pyspark.ml.classification import RandomForestClassifier
 import happybase
@@ -14,7 +14,7 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # %% Step 2: Connect to HBase and read table
-connection = happybase.Connection('master')  # replace with your HBase master host
+connection = happybase.Connection('master')  # Replace with your HBase Thrift host
 table = connection.table('final')
 
 rows = []
@@ -27,24 +27,25 @@ df = pd.DataFrame(rows)
 
 # %% Step 3: Clean data
 
-# Convert numeric columns safely
+# Convert numeric columns safely (exclude ID and Credit_Score)
 for col_name in df.columns:
-    df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+    if col_name not in ['ID', 'Credit_Score']:
+        df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
 
 # Fill numeric NaNs with 0
 numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
 df[numeric_cols] = df[numeric_cols].fillna(0)
 
-# Convert non-numeric columns to string
+# Fill object columns and convert to string
 object_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
 for col_name in object_cols:
     df[col_name] = df[col_name].fillna('').astype(str)
 
-# Fix Credit_Score: blanks -> "unknown"
-df['Credit_Score'] = df['Credit_Score'].replace('', 'unknown')
+# Fix Credit_Score: blanks or NaN -> "unknown"
+df['Credit_Score'] = df['Credit_Score'].replace(['', np.nan], 'unknown')
 
 # %% Step 4: Identify categorical columns
-categorical_cols = [c for c in object_cols if c != 'ID' and c != 'Credit_Score']
+categorical_cols = [c for c in object_cols if c not in ['ID', 'Credit_Score']]
 
 # %% Step 5: Convert to Spark DataFrame
 spark_df = spark.createDataFrame(df)
@@ -58,7 +59,9 @@ for cat_col in categorical_cols:
 
 # %% Step 7: Encode label (Credit_Score)
 label_indexer = StringIndexer(inputCol='Credit_Score', outputCol='label', handleInvalid='keep')
-spark_df = label_indexer.fit(spark_df).transform(spark_df)
+label_model = label_indexer.fit(spark_df)
+spark_df = label_model.transform(spark_df)
+labels = label_model.labels  # Original string labels
 
 # %% Step 8: Assemble features (exclude ID and label)
 feature_cols = [c for c in numeric_cols if c != 'ID'] + indexers
@@ -70,20 +73,21 @@ train_df, test_df = spark_df.randomSplit([0.8, 0.2], seed=42)
 
 # %% Step 10: Train Random Forest Classifier
 rf = RandomForestClassifier(featuresCol='features', labelCol='label',
-                            numTrees=5, maxDepth=3, seed=42)
+                            numTrees=50, maxDepth=5, seed=42)
 model = rf.fit(train_df)
 
 # %% Step 11: Make predictions
 predictions = model.transform(test_df)
-predictions.select('ID', 'Credit_Score', 'prediction').show(10)
+
+# Map numeric prediction back to original credit score strings
+predictions_pd = predictions.select('ID', 'prediction').toPandas()
+predictions_pd['Predicted_Credit_Score'] = predictions_pd['prediction'].apply(lambda x: labels[int(x)])
 
 # %% Step 12: Write predictions back to HBase in batches
-predictions_pd = predictions.select('ID', 'prediction').toPandas()
-
 batch_size = 500
 with table.batch(batch_size=batch_size) as b:
-    for i, row in enumerate(predictions_pd.itertuples()):
-        b.put(str(row.ID), {b'cf:Predicted_Credit_Score': str(int(row.prediction)).encode()})
+    for i, row in predictions_pd.iterrows():
+        b.put(str(row.ID), {b'cf:Predicted_Credit_Score': row.Predicted_Credit_Score.encode()})
 
 print("Predictions written back to HBase successfully.")
 

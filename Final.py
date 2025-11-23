@@ -21,18 +21,16 @@ for key, data in table.scan():
     row = {}
     for k, v in data.items():
         col_name = k.decode().split(':')[-1]
+        # Convert values to float, fallback to 0 if conversion fails
         try:
-            # Convert to float if possible
-            row[col_name] = float(v)
+            row[col_name] = float(v.decode())
         except:
-            # If it fails (e.g., string), store as string
-            row[col_name] = v.decode()
+            row[col_name] = 0.0
     row['ID'] = key.decode()
     rows.append(row)
 
-
 df = pd.DataFrame(rows)
-df = df.head(500)  # Only 100 rows for testing
+df = df.head(500)  # Only 500 rows for testing
 
 # %% Step 3: Clean numeric data
 # Convert to numeric and handle missing

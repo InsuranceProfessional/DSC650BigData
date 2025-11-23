@@ -19,12 +19,12 @@ table = connection.table('final')
 rows = []
 for key, data in table.scan():
     row = {k.decode().split(':')[-1]: v.decode() for k, v in data.items()}
-    row['ID'] = key.decode()
+    row['Customer_ID'] = key.decode()
     rows.append(row)
 
 df = pd.DataFrame(rows)
 
-# %% Step 3: Ensure numeric columns are numeric and fill blanks with 0
+# %% Step 3: Ensure numeric columns are numeric
 numeric_cols = [
     'Age', 'Annual_Income', 'Monthly_In_hand_Salary', 'Num_Bank_Accounts',
     'Num_Credit_Card', 'Interest_Rate', 'Num_of_Loan', 'Delay_from_due_date',
@@ -39,7 +39,7 @@ for col_name in numeric_cols:
     if col_name in df.columns:
         df[col_name] = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
 
-# %% Step 4: Ensure categorical columns are filled with 'Unknown'
+# %% Step 4: Ensure categorical columns are filled
 categorical_cols = [
     'Type_of_Loan', 'Credit_Mix', 'Payment_of_Min_Amount', 'Payment_Behaviour',
     'Occ_Accountant', 'Occ_Architect', 'Occ_Developer', 'Occ_Doctor', 'Occ_Engineer',
@@ -52,8 +52,11 @@ for col_name in categorical_cols:
     if col_name in df.columns:
         df[col_name] = df[col_name].fillna('Unknown')
 
-# %% Step 5: Ensure ID is numeric and fill blanks with 0
-df['ID'] = pd.to_numeric(df['ID'], errors='coerce').fillna(0)
+# %% Step 5: Ensure Customer_ID is fully string
+df['Customer_ID'] = df['Customer_ID'].fillna('0').astype(str)
+
+# %% Optional: Check types to make sure uniform
+# print(df['Customer_ID'].map(type).value_counts())
 
 # %% Step 6: Convert to Spark DataFrame
 spark_df = spark.createDataFrame(df)
@@ -90,12 +93,12 @@ model = rf.fit(train_df)
 
 # %% Step 12: Make predictions
 predictions = model.transform(test_df)
-predictions.select('ID', 'Credit_Score', 'prediction').show(10)
+predictions.select('Customer_ID', 'Credit_Score', 'prediction').show(10)
 
 # %% Step 13: Write predictions back to HBase
-predictions_pd = predictions.select('ID', 'prediction').toPandas()
+predictions_pd = predictions.select('Customer_ID', 'prediction').toPandas()
 for _, row in predictions_pd.iterrows():
-    table.put(str(int(row['ID'])), {b'cf:Predicted_Credit_Score': str(int(row['prediction'])).encode()})
+    table.put(str(row['Customer_ID']), {b'cf:Predicted_Credit_Score': str(int(row['prediction'])).encode()})
 
 print("Predictions written back to HBase successfully.")
 

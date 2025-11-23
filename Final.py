@@ -68,7 +68,7 @@ if label_col in spark_df.columns:
     spark_df = label_indexer.fit(spark_df).transform(spark_df)
 else:
     raise ValueError("Credit_Score column not found!")
-
+ 
 # %% Step 9: Split train/test
 train_df, test_df = spark_df.randomSplit([0.8, 0.2], seed=42)
 

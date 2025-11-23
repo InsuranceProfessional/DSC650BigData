@@ -18,24 +18,22 @@ table = connection.table('final')
 
 rows = []
 for key, data in table.scan():
-    row = {}
-    for k, v in data.items():
-        col_name = k.decode().split(':')[-1]
-        # Convert values to float, fallback to 0 if conversion fails
-        try:
-            row[col_name] = float(v.decode())
-        except:
-            row[col_name] = 0.0
+    row = {k.decode().split(':')[-1]: v.decode() for k, v in data.items()}
     row['ID'] = key.decode()
     rows.append(row)
 
 df = pd.DataFrame(rows)
-df = df.head(500)  # Only 500 rows for testing
 
 # %% Step 3: Clean numeric data
-# Convert to numeric and handle missing
-for col_name in ['Annual_Income', 'Monthly_In_hand_Salary']:
-    df[col_name] = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
+# Convert numeric columns and handle missing values
+df['Annual_Income'] = pd.to_numeric(df['Annual_Income'], errors='coerce').fillna(0)
+df['Monthly_In_hand_Salary'] = pd.to_numeric(df['Monthly_In_hand_Salary'], errors='coerce').fillna(0)
+
+# Filter rows: only keep Monthly_In_hand_Salary > 100
+df = df[df['Monthly_In_hand_Salary'] > 100]
+
+# Optional: only keep top 500 rows for testing
+df = df.head(500)
 
 # %% Step 4: Convert to Spark DataFrame
 spark_df = spark.createDataFrame(df[['ID', 'Annual_Income', 'Monthly_In_hand_Salary']])

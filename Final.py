@@ -23,18 +23,20 @@ for key, data in table.scan():
 
 df = pd.DataFrame(rows)
 
-# %% Step 3: Define numeric columns and coerce to numeric safely
+# --- Step: Ensure all numeric columns are numeric ---
 numeric_cols = [
     'Age', 'Annual_Income', 'Monthly_In_hand_Salary', 'Num_Bank_Accounts',
     'Num_Credit_Card', 'Interest_Rate', 'Num_of_Loan', 'Delay_from_due_date',
     'Num_of_Delayed_Payment', 'Changed_Credit_Limit', 'Num_Credit_Inquiries',
     'Outstanding_Debt', 'Credit_Utilization_Ratio', 'Total_EMI_per_month',
     'Amount_invested_monthly', 'Monthly_Balance', 'Median_Occupation_Income',
-    'Income_vs_Occupation_Median', 'Investment_to_Salary_Ratio', 'Credit_History_Age'
+    'Income_vs_Occupation_Median', 'Investment_to_Salary_Ratio', 
+    'Credit_History_Age', 'Credit_Score'  # include Credit_Score here
 ]
 
 for col_name in numeric_cols:
     if col_name in df.columns:
+        # Coerce to numeric and fill NaNs with 0 (or median if preferred)
         df[col_name] = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
 
 # %% Step 4: Handle categorical columns

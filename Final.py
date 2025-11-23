@@ -14,7 +14,7 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 # %% Step 2: Connect to HBase and read table
-connection = happybase.Connection('master')  # Replace with your HBase Thrift host
+connection = happybase.Connection('master')
 table = connection.table('final')
 
 rows = []
@@ -84,7 +84,7 @@ predictions_pd = predictions.select('ID', 'prediction').toPandas()
 predictions_pd['Predicted_Credit_Score'] = predictions_pd['prediction'].apply(lambda x: labels[int(x)])
 
 # %% Step 12: Write predictions back to HBase in batches
-batch_size = 500
+batch_size = 1000
 with table.batch(batch_size=batch_size) as b:
     for i, row in predictions_pd.iterrows():
         b.put(str(row.ID), {b'cf:Predicted_Credit_Score': row.Predicted_Credit_Score.encode()})

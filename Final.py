@@ -53,14 +53,11 @@ print("RMSE:", training_summary.rootMeanSquaredError)
 print("R2:", training_summary.r2)
 
 # %% Step 10: Write predictions back to HBase
-def write_partition_to_hbase(partition):
-    import happybase
-    conn = happybase.Connection('master')
-    tbl = conn.table('final')
-    with tbl.batch(batch_size=500) as b:
-        for row in partition:
-            b.put(str(row.ID), {b'cf:Predicted_Monthly_Salary': str(row.prediction).encode()})
-    conn.close()
+predictions_pd = predictions.select('ID', 'prediction').toPandas()
+with table.batch(batch_size=500) as b:
+    for i, row in predictions_pd.iterrows():
+        b.put(str(row.ID), {b'cf:Predicted_Monthly_Salary': str(row.prediction).encode()})
+
 
 predictions.select('ID', 'prediction').rdd.foreachPartition(write_partition_to_hbase)
 print("Predictions written back to HBase successfully.")

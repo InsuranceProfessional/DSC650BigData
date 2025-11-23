@@ -1,6 +1,7 @@
 # %% Imports
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, udf
+from pyspark.sql.types import StringType
 from pyspark.ml.feature import VectorAssembler, StringIndexer
 from pyspark.ml.classification import RandomForestClassifier
 import happybase
@@ -24,7 +25,7 @@ for key, data in table.scan():
     rows.append(row)
 
 df = pd.DataFrame(rows)
-df = df.head(100)  # for testing; remove or adjust for full dataset
+df = df.head(100)  # Keep small for testing
 
 # %% Step 3: Clean data
 # Convert numeric columns safely (exclude ID and Credit_Score)
@@ -66,6 +67,11 @@ labels = label_model.labels  # Original string labels
 # %% Step 8: Assemble features (exclude ID and label)
 feature_cols = [c for c in numeric_cols if c != 'ID'] + indexers
 assembler = VectorAssembler(inputCols=feature_cols, outputCol="features", handleInvalid="keep")
+
+# Drop any old 'Predicted_Credit_Score' to avoid ambiguity
+if 'Predicted_Credit_Score' in spark_df.columns:
+    spark_df = spark_df.drop('Predicted_Credit_Score')
+
 spark_df = assembler.transform(spark_df)
 
 # %% Step 9: Split train/test
@@ -79,15 +85,21 @@ model = rf.fit(train_df)
 # %% Step 11: Make predictions
 predictions = model.transform(test_df)
 
-# Map numeric prediction back to original credit score strings in a new column
-predictions_pd = predictions.select('ID', 'prediction').toPandas()
-predictions_pd['Predicted_Credit_Score'] = predictions_pd['prediction'].apply(lambda x: labels[int(x)])
+# Map numeric prediction to string labels in Spark
+map_udf = udf(lambda x: labels[int(x)], StringType())
+predictions = predictions.withColumn('Predicted_Credit_Score', map_udf(col('prediction')))
 
-# %% Step 12: Write predictions back to HBase in batches
-batch_size = 500
-with table.batch(batch_size=batch_size) as b:
-    for i, row in predictions_pd.iterrows():
-        b.put(str(row.ID), {b'cf:Predicted_Credit_Score': row.Predicted_Credit_Score.encode()})
+# %% Step 12: Write predictions back to HBase using foreachPartition
+def write_partition_to_hbase(partition):
+    import happybase  # must import inside worker function
+    conn = happybase.Connection('master')
+    tbl = conn.table('final')
+    with tbl.batch(batch_size=500) as b:
+        for row in partition:
+            b.put(str(row.ID), {b'cf:Predicted_Credit_Score': row.Predicted_Credit_Score.encode()})
+    conn.close()
+
+predictions.select('ID', 'Predicted_Credit_Score').rdd.foreachPartition(write_partition_to_hbase)
 
 print("Predictions written back to HBase successfully.")
 

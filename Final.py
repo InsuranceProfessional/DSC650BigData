@@ -23,7 +23,7 @@ for key, data in table.scan():
     rows.append(row)
 
 df = pd.DataFrame(rows)
-df = df.head(100)  # Only 100 rows for testing
+df = df.head(500)  # Only 100 rows for testing
 
 # %% Step 3: Clean numeric data
 # Convert to numeric and handle missing

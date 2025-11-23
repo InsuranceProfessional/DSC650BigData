@@ -68,9 +68,6 @@ labels = label_model.labels  # Original string labels
 feature_cols = [c for c in numeric_cols if c != 'ID'] + indexers
 assembler = VectorAssembler(inputCols=feature_cols, outputCol="features", handleInvalid="keep")
 
-# Drop any old 'Predicted_Credit_Score' to avoid ambiguity
-if 'Predicted_Credit_Score' in spark_df.columns:
-    spark_df = spark_df.drop('Predicted_Credit_Score')
 
 spark_df = assembler.transform(spark_df)
 

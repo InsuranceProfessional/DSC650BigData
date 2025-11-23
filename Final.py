@@ -1,109 +1,131 @@
-# %% Imports
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
-from pyspark.ml.feature import VectorAssembler, StringIndexer
+from pyspark.sql.functions import when, col
+from pyspark.ml.feature import StringIndexer, VectorAssembler
 from pyspark.ml.classification import RandomForestClassifier
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 import happybase
-import pandas as pd
-import numpy as np
 
-# %% Step 1: Create Spark session
+# ---------------------------
+# Step 1: Initialize Spark
+# ---------------------------
 spark = SparkSession.builder \
-    .appName("HBase Credit Score Prediction") \
+    .appName("CreditScoreClassification") \
     .enableHiveSupport() \
     .getOrCreate()
 
-# %% Step 2: Connect to HBase and read table
-connection = happybase.Connection('master')  # replace with your HBase master host
-table = connection.table('final')
+# ---------------------------
+# Step 2: Load Data
+# ---------------------------
+df = spark.sql("SELECT * FROM gradesml")  # Replace with your Hive table
 
-rows = []
-for key, data in table.scan():
-    row = {k.decode().split(':')[-1]: v.decode() for k, v in data.items()}
-    row['ID'] = key.decode()
-    rows.append(row)
+# ---------------------------
+# Step 3: Clean & Transform Credit_Score
+# ---------------------------
+df = df.withColumn(
+    "Credit_Score",
+    when(col("Credit_Score") == "gblank", "unknown")
+    .otherwise(col("Credit_Score"))
+)
 
-df = pd.DataFrame(rows)
+# ---------------------------
+# Step 4: Identify columns
+# ---------------------------
+all_cols = df.columns
+numeric_cols = [c for c, t in df.dtypes if t in ("int", "double")]
+object_cols = [c for c, t in df.dtypes if t not in ("int", "double")]
 
-# %% Step 3: Clean and convert types
-for col_name in df.columns:
-    # Try numeric conversion
-    df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+# ---------------------------
+# Step 5: Handle categorical features
+# ---------------------------
+categorical_cols = [c for c in object_cols if c != 'Credit_Score']
 
-numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-df[numeric_cols] = df[numeric_cols].fillna(0)
+# Remove high-cardinality categorical features for RandomForest
+max_bins = 32
+low_card_cats = []
+for cat in categorical_cols:
+    num_unique = df.select(cat).distinct().count()
+    if num_unique < max_bins:
+        low_card_cats.append(cat)
+    else:
+        print(f"Skipping {cat} with {num_unique} unique values")
 
-object_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
-for col_name in object_cols:
-    df[col_name] = df[col_name].fillna('unknown').astype(str)
+categorical_cols = low_card_cats
 
-# %% Step 4: Fix Credit_Score column
-if 'Credit_Score' in df.columns:
-    df['Credit_Score'] = df['Credit_Score'].replace({'': 'unknown', ' ': 'unknown', None: 'unknown'})
-else:
-    raise ValueError("Credit_Score column not found!")
-
-# %% Step 5: Identify categorical columns
-# Exclude numeric and ID-like columns
-categorical_cols = [c for c in object_cols if c != 'ID' and c != 'Credit_Score']
-
-# %% Step 6: Convert to Spark DataFrame
-spark_df = spark.createDataFrame(df)
-
-# %% Step 7: Encode categorical columns
+# ---------------------------
+# Step 6: Encode categorical features
+# ---------------------------
 indexers = []
 for cat_col in categorical_cols + ['Credit_Score']:
     indexer = StringIndexer(inputCol=cat_col, outputCol=cat_col + "_idx", handleInvalid="keep")
-    spark_df = indexer.fit(spark_df).transform(spark_df)
+    df = indexer.fit(df).transform(df)
     indexers.append(cat_col + "_idx")
 
-# %% Step 8: Assemble features
-# Exclude ID from features
-high_card_cols = ['ID']
-feature_cols = [c for c in numeric_cols if c not in high_card_cols] + \
-               [c for c in indexers if not any(h in c for h in high_card_cols)]
+# ---------------------------
+# Step 7: Assemble features
+# ---------------------------
+feature_cols = [c for c in numeric_cols if c != 'ID'] + \
+               [c for c in indexers if c != 'Credit_Score_idx']
+
 assembler = VectorAssembler(inputCols=feature_cols, outputCol="features", handleInvalid="keep")
-spark_df = assembler.transform(spark_df)
+df = assembler.transform(df)
 
-# %% Step 9: Prepare label
-label_col_idx = 'Credit_Score_idx'
+# ---------------------------
+# Step 8: Split data
+# ---------------------------
+train_df, test_df = df.randomSplit([0.8, 0.2], seed=42)
 
-# %% Step 10: Split train/test
-train_df, test_df = spark_df.randomSplit([0.8, 0.2], seed=42)
+# ---------------------------
+# Step 9: Train RandomForest
+# ---------------------------
+rf = RandomForestClassifier(
+    labelCol="Credit_Score_idx",
+    featuresCol="features",
+    numTrees=100,
+    maxDepth=10,
+    maxBins=max_bins,
+    seed=42
+)
 
-# %% Step 11: Train Random Forest
-rf = RandomForestClassifier(featuresCol='features', labelCol=label_col_idx,
-                            numTrees=50, maxDepth=5, seed=42)
 model = rf.fit(train_df)
 
-# %% Step 12: Make predictions
+# ---------------------------
+# Step 10: Make predictions
+# ---------------------------
 predictions = model.transform(test_df)
-predictions.select('ID', 'Credit_Score', 'prediction').show(10)
+predictions.select("ID", "Credit_Score", "prediction").show(10)
 
-# %% Step 13: Evaluate
-evaluator = MulticlassClassificationEvaluator(labelCol=label_col_idx, predictionCol='prediction')
-accuracy = evaluator.setMetricName("accuracy").evaluate(predictions)
-precision = evaluator.setMetricName("weightedPrecision").evaluate(predictions)
-recall = evaluator.setMetricName("weightedRecall").evaluate(predictions)
-f1 = evaluator.setMetricName("f1").evaluate(predictions)
+# ---------------------------
+# Step 11: Evaluate performance
+# ---------------------------
+evaluator = MulticlassClassificationEvaluator(
+    labelCol="Credit_Score_idx",
+    predictionCol="prediction"
+)
 
+accuracy = evaluator.evaluate(predictions, {evaluator.metricName: "accuracy"})
+precision = evaluator.evaluate(predictions, {evaluator.metricName: "weightedPrecision"})
+recall = evaluator.evaluate(predictions, {evaluator.metricName: "weightedRecall"})
+f1 = evaluator.evaluate(predictions, {evaluator.metricName: "f1"})
+
+print("===== MODEL PERFORMANCE =====")
 print(f"Accuracy: {accuracy:.4f}")
 print(f"Precision: {precision:.4f}")
 print(f"Recall: {recall:.4f}")
 print(f"F1 Score: {f1:.4f}")
 
-# %% Step 14: Write predictions back to HBase in batches
-predictions_pd = predictions.select('ID', 'prediction').toPandas()
-batch_size = 100
-for start in range(0, len(predictions_pd), batch_size):
-    batch = predictions_pd.iloc[start:start+batch_size]
-    with table.batch() as b:
-        for _, row in batch.iterrows():
-            b.put(str(row['ID']), {b'cf:Predicted_Credit_Score': str(int(row['prediction'])).encode()})
+# ---------------------------
+# Step 12: Write predictions to HBase
+# ---------------------------
+connection = happybase.Connection('localhost')
+table = connection.table('predictions')  # Replace with your HBase table
 
-print("Predictions written back to HBase successfully.")
+for row in predictions.select("ID", "Credit_Score", "prediction").collect():
+    table.put(str(row['ID']).encode(), {
+        b'info:Credit_Score': str(row['Credit_Score']).encode(),
+        b'info:prediction': str(row['prediction']).encode()
+    })
 
-# %% Step 15: Stop Spark and HBase connection
+# ---------------------------
+# Step 13: Stop Spark
+# ---------------------------
 spark.stop()
-connection.close()

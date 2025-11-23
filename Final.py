@@ -7,7 +7,8 @@ from pyspark.ml.classification import RandomForestClassifier
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 
 # %% HBase Connection
-connection = happybase.Connection('master')  # replace with your HBase master host
+connection = happybase.Connection(host='master', port=9090)  # replace with your HBase master host
+connection.open()
 table = connection.table('final')
 
 # %% Load data from HBase into Pandas DataFrame

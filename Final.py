@@ -24,7 +24,7 @@ for key, data in table.scan():
 
 df = pd.DataFrame(rows)
 
-# --- Step 3: Ensure numeric columns are numeric ---
+# %% Step 3: Ensure numeric columns are numeric and fill blanks with 0
 numeric_cols = [
     'Age', 'Annual_Income', 'Monthly_In_hand_Salary', 'Num_Bank_Accounts',
     'Num_Credit_Card', 'Interest_Rate', 'Num_of_Loan', 'Delay_from_due_date',
@@ -39,7 +39,7 @@ for col_name in numeric_cols:
     if col_name in df.columns:
         df[col_name] = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
 
-# --- Step 4: Ensure categorical columns are filled ---
+# %% Step 4: Ensure categorical columns are filled with 'Unknown'
 categorical_cols = [
     'Type_of_Loan', 'Credit_Mix', 'Payment_of_Min_Amount', 'Payment_Behaviour',
     'Occ_Accountant', 'Occ_Architect', 'Occ_Developer', 'Occ_Doctor', 'Occ_Engineer',
@@ -52,8 +52,8 @@ for col_name in categorical_cols:
     if col_name in df.columns:
         df[col_name] = df[col_name].fillna('Unknown')
 
-# --- Step 5: Ensure ID is string ---
-df['ID'] = df['ID'].astype(str)
+# %% Step 5: Ensure ID is numeric and fill blanks with 0
+df['ID'] = pd.to_numeric(df['ID'], errors='coerce').fillna(0)
 
 # %% Step 6: Convert to Spark DataFrame
 spark_df = spark.createDataFrame(df)
@@ -95,7 +95,7 @@ predictions.select('ID', 'Credit_Score', 'prediction').show(10)
 # %% Step 13: Write predictions back to HBase
 predictions_pd = predictions.select('ID', 'prediction').toPandas()
 for _, row in predictions_pd.iterrows():
-    table.put(str(row['ID']), {b'cf:Predicted_Credit_Score': str(int(row['prediction'])).encode()})
+    table.put(str(int(row['ID'])), {b'cf:Predicted_Credit_Score': str(int(row['prediction'])).encode()})
 
 print("Predictions written back to HBase successfully.")
 
